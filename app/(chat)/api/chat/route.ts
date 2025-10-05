@@ -45,6 +45,7 @@ import { generateTitleFromUserMessage } from "../../actions";
 import { type PostRequestBody, postRequestBodySchema } from "./schema";
 import error from "next/error";
 
+
 export const maxDuration = 60;
 
 let globalStreamContext: ResumableStreamContext | null = null;
@@ -85,22 +86,28 @@ export function getStreamContext() {
   return globalStreamContext;
 }
 
+
 export async function POST(request: Request) {
   let requestBody: PostRequestBody;
 
   try {
     const json = await request.json();
     requestBody = postRequestBodySchema.parse(json);
-    console.log("This is Request Body:");
+    console.log("This is Request Body____:");
     console.log(requestBody);
-    console.log("This is the text in request body :");
+
+ // Extract user message
     let userMessage: string | undefined;
     if (requestBody.message.parts[0].type === "text") {
       userMessage = requestBody.message.parts[0].text;
-      console.log(userMessage);
+      console.log("User message extracted:", userMessage);
     } else {
-      console.log("No text found in the first part.");
-    }
+      throw new Error("No text found in the message");
+    }    
+
+    // Get conversation state from request
+    const previousResponseId = requestBody.previousResponseId;
+    console.log("user sent new message's Previous Response ID:", previousResponseId);
 
     // call custom backend
     const backendURL = process.env.BACKEND_URL || 'http://localhost:8000';
@@ -110,7 +117,11 @@ export async function POST(request: Request) {
     const backendResponse = await fetch(`${backendURL}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: userMessage }),
+      body: JSON.stringify({ 
+        message: userMessage,
+        previousResponseId: requestBody.previousResponseId // previous response
+        
+      }),
     });
     
     if (!backendResponse.ok) {
@@ -119,14 +130,18 @@ export async function POST(request: Request) {
     
     const backendData = await backendResponse.json();
     const assistantContent = backendData.data?.response || 'No response';
+
     
     console.log('Backend response:', assistantContent);
+
 
     // Create a stream with the backend response
     const stream = createUIMessageStream({
       execute: ({ writer: dataStream }) => {
         const messageId = generateUUID();
-        
+        const newResponseId = backendData.data?.responseId;
+        console.log('New Response ID from backend:', newResponseId);
+
         // Start the text stream
         dataStream.write({
           type: 'text-start',
@@ -146,9 +161,22 @@ export async function POST(request: Request) {
           type: 'text-end',
           id: messageId
         });
-      },
-      generateId: generateUUID,
-      
+
+        // Write the new response ID to the stream
+        dataStream.write({
+        type: 'data-usage',
+        id: messageId,
+        data: {
+          promptTokens: 0,
+          completionTokens: 0, 
+          totalTokens: 0,
+          responseId: newResponseId // responseId here
+        }
+    });
+
+    },
+    generateId: generateUUID,
+
     
     });
 
