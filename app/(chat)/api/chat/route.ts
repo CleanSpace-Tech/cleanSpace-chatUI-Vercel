@@ -114,7 +114,7 @@ export async function POST(request: Request) {
     if (!backendURL) {
       throw new Error("Backend URL is not defined");
     }
-    const backendResponse = await fetch(`${backendURL}/chat`, {
+    const backendResponse = await fetch(`${backendURL}/chat/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
@@ -128,63 +128,137 @@ export async function POST(request: Request) {
       throw new Error(`Backend error: ${backendResponse.status}`);
     }
     
-    const backendData = await backendResponse.json();
-    const assistantContent = backendData.data?.response || 'No response';
 
-    
-    console.log('Backend response:', assistantContent);
+    // Create stream that reads from backend
+  const stream = createUIMessageStream({
+    execute: async ({ writer: dataStream }) => {
+      const messageId = generateUUID();
+      let fullText = '';
+      let responseId = '';
 
+      dataStream.write({
+        type: 'text-start',
+        id: messageId,
+        providerMetadata: undefined
+      });
 
-    // Create a stream with the backend response
-    const stream = createUIMessageStream({
-      execute: ({ writer: dataStream }) => {
-        const messageId = generateUUID();
-        const newResponseId = backendData.data?.responseId;
-        console.log('New Response ID from backend:', newResponseId);
+      // Read the SSE stream from backend
+      const reader = backendResponse.body?.getReader();
+      const decoder = new TextDecoder();
 
-        // Start the text stream
-        dataStream.write({
-          type: 'text-start',
-          id: messageId,
-          providerMetadata: undefined
-        });
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-        // Write the content as a text delta
-        dataStream.write({
-          type: 'text-delta',
-          id: messageId,
-          delta: assistantContent
-        });
+          const chunk = decoder.decode(value);
+          const lines = chunk.split('\n');
 
-        // End the text stream
-        dataStream.write({
-          type: 'text-end',
-          id: messageId
-        });
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6);
+              if (data === '[DONE]') continue;
 
-        // Write the new response ID to the stream
-        dataStream.write({
+              try {
+                const parsed = JSON.parse(data);
+                if (parsed.chunk) {
+                  if (parsed.chunk.startsWith('___RESPONSE_ID___')) {
+                    responseId = parsed.chunk.replace('___RESPONSE_ID___', '').replace('___', '');
+                  } else {
+                    fullText += parsed.chunk;
+                    // Stream each chunk to frontend
+                    dataStream.write({
+                      type: 'text-delta',
+                      id: messageId,
+                      delta: parsed.chunk
+                    });
+                  }
+                }
+              } catch (e) {
+                // Skip invalid JSON
+              }
+            }
+          }
+        }
+      }
+
+      dataStream.write({
+        type: 'text-end',
+        id: messageId
+      });
+
+      // Send response ID
+      dataStream.write({
         type: 'data-usage',
         id: messageId,
         data: {
           promptTokens: 0,
-          completionTokens: 0, 
+          completionTokens: 0,
           totalTokens: 0,
-          responseId: newResponseId // responseId here
+          responseId: responseId
         }
-    });
-
+      });
     },
     generateId: generateUUID,
+  });
+
+  return new Response(stream.pipeThrough(new JsonToSseTransformStream()));
+
+    // const backendData = await backendResponse.json();
+    // const assistantContent = backendData.data?.response || 'No response';
 
     
-    });
+    // console.log('Backend response:', assistantContent);
 
-    return new Response(stream.pipeThrough(new JsonToSseTransformStream()));
+
+    // // Create a stream with the backend response
+    // const stream = createUIMessageStream({
+    //   execute: ({ writer: dataStream }) => {
+    //     const messageId = generateUUID();
+    //     const newResponseId = backendData.data?.responseId;
+    //     console.log('New Response ID from backend:', newResponseId);
+
+    //     // Start the text stream
+    //     dataStream.write({
+    //       type: 'text-start',
+    //       id: messageId,
+    //       providerMetadata: undefined
+    //     });
+
+    //     // Write the content as a text delta
+    //     dataStream.write({
+    //       type: 'text-delta',
+    //       id: messageId,
+    //       delta: assistantContent
+    //     });
+
+    //     // End the text stream
+    //     dataStream.write({
+    //       type: 'text-end',
+    //       id: messageId
+    //     });
+
+    //     // Write the new response ID to the stream
+    //     dataStream.write({
+    //     type: 'data-usage',
+    //     id: messageId,
+    //     data: {
+    //       promptTokens: 0,
+    //       completionTokens: 0, 
+    //       totalTokens: 0,
+    //       responseId: newResponseId // responseId here
+    //     }
+    // });
+
+    // },
+    // generateId: generateUUID,
 
     
+    // });
 
+    // return new Response(stream.pipeThrough(new JsonToSseTransformStream()));
 
+    ////////////// 
 
 
 
