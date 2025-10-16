@@ -103,14 +103,17 @@ export async function POST(request: Request) {
     }
 
     // call custom backend
-    const backendURL = process.env.BACKEND_URL || 'http://localhost:8000';
+    const backendURL = process.env.BACKEND_URL || 'http://localhost:8001';
     if (!backendURL) {
       throw new Error("Backend URL is not defined");
     }
-    const backendResponse = await fetch(`${backendURL}/chat`, {
+    const backendResponse = await fetch(`${backendURL}/api/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: userMessage }),
+      body: JSON.stringify({ 
+        type: 'message',
+        text: userMessage 
+      }),
     });
     
     if (!backendResponse.ok) {
@@ -118,7 +121,7 @@ export async function POST(request: Request) {
     }
     
     const backendData = await backendResponse.json();
-    const assistantContent = backendData.data?.response || 'No response';
+    const assistantContent = backendData.text || 'No response';
     
     console.log('Backend response:', assistantContent);
 
