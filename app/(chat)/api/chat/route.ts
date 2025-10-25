@@ -100,7 +100,7 @@ export async function POST(request: Request) {
     console.log("user sent new message's Previous Response ID:", previousResponseId);
 
     // call custom backend
-    const backendURL = process.env.BACKEND_URL;
+    const backendURL = process.env.BACKEND_URL || 'http://localhost:8001';
     if (!backendURL) {
       throw new Error("Backend URL is not defined");
     }
