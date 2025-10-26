@@ -43,10 +43,12 @@ import type { AppUsage } from "@/lib/usage";
 import { convertToUIMessages, generateUUID } from "@/lib/utils";
 import { generateTitleFromUserMessage } from "../../actions";
 import { type PostRequestBody, postRequestBodySchema } from "./schema";
+import error from "next/error";
+
 
 export const maxDuration = 60;
 
-let globalStreamContext: ResumableStreamContext | null = null;
+
 
 const getTokenlensCatalog = cache(
   async (): Promise<ModelCatalog | undefined> => {
@@ -64,25 +66,8 @@ const getTokenlensCatalog = cache(
   { revalidate: 24 * 60 * 60 } // 24 hours
 );
 
-export function getStreamContext() {
-  if (!globalStreamContext) {
-    try {
-      globalStreamContext = createResumableStreamContext({
-        waitUntil: after,
-      });
-    } catch (error: any) {
-      if (error.message.includes("REDIS_URL")) {
-        console.log(
-          " > Resumable streams are disabled due to missing REDIS_URL"
-        );
-      } else {
-        console.error(error);
-      }
-    }
-  }
 
-  return globalStreamContext;
-}
+
 
 export async function POST(request: Request) {
   let requestBody: PostRequestBody;
@@ -90,221 +75,156 @@ export async function POST(request: Request) {
   try {
     const json = await request.json();
     requestBody = postRequestBodySchema.parse(json);
+    console.log("This is Request Body____:");
+    console.log(requestBody);
+
+    // ✅ Extract REAL chatId from request
+    const chatId = requestBody.id; // This is the chat/conversation ID
+    console.log("💬 Chat ID:", chatId);
+
+    // ✅ Extract REAL message ID from the incoming message
+    const messageId = requestBody.message.id;
+    console.log("📝 Message ID:", messageId);
+
+    // Extract user message
+    let userMessage: string | undefined;
+    if (requestBody.message.parts[0].type === "text") {
+      userMessage = requestBody.message.parts[0].text;
+      console.log("User message extracted:", userMessage);
+    } else {
+      throw new Error("No text found in the message");
+    }    
+
+    // Get conversation state from request
+    const previousResponseId = requestBody.previousResponseId;
+    console.log("user sent new message's Previous Response ID:", previousResponseId);
+
+    // call custom backend
+    const backendURL = process.env.BACKEND_URL;
+    if (!backendURL) {
+      throw new Error("Backend URL is not defined");
+    }
+    const backendResponse = await fetch(`${backendURL}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(
+        {
+          "messages": [
+            {
+              "id": messageId,
+              "role": "user",
+              "content": userMessage
+            }
+          ],
+          "conversation_id": chatId
+        }
+      ),
+    });
+    
+    if (!backendResponse.ok) {
+      throw new Error(`Backend error: ${backendResponse.status}`);
+    }
+
+
+    // Create stream that reads from backend
+    const stream = createUIMessageStream({
+      execute: async ({ writer: dataStream }) => {
+        const messageId = generateUUID();
+        let fullText = '';
+
+        dataStream.write({
+          type: 'text-start',
+          id: messageId,
+          providerMetadata: undefined
+        });
+
+        // Read the stream from backend
+        const reader = backendResponse.body?.getReader();
+        const decoder = new TextDecoder();
+
+        if (reader) {
+          let buffer = '';
+          
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value, { stream: true });
+            buffer += chunk;
+            
+            // Split by newlines
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || ''; // Keep incomplete line
+
+            for (const line of lines) {
+              if (!line.trim()) continue;
+
+              console.log('📦 Line:', line);
+
+              // Match Flask format: "0:{...}" or "d:{...}"
+              const match = line.match(/^(\d+|d):(.+)$/);
+              if (!match) continue;
+
+              const [, type, data] = match;
+
+              try {
+                const parsed = JSON.parse(data);
+
+                if (type === '0' && parsed.type === 'text-delta' && parsed.textDelta) {
+                  fullText += parsed.textDelta;
+                  
+                  dataStream.write({
+                    type: 'text-delta',
+                    id: messageId,
+                    delta: parsed.textDelta
+                  });
+                  
+                  console.log('✍️ Wrote:', parsed.textDelta);
+                } 
+                else if (type === 'd' && parsed.finishReason === 'stop') {
+                  console.log('🏁 Finished');
+                }
+              } catch (e) {
+                console.error('Parse error:', line, e);
+              }
+            }
+          }
+        }
+
+        dataStream.write({
+          type: 'text-end',
+          id: messageId
+        });
+
+        dataStream.write({
+          type: 'data-usage',
+          id: messageId,
+          data: {
+            promptTokens: 0,
+            completionTokens: 0,
+            totalTokens: 0,
+            responseId: 'test-001' // Use conversation_id or generate new one
+          }
+        });
+      },
+      generateId: generateUUID,
+    });
+
+    return new Response(stream.pipeThrough(new JsonToSseTransformStream()));
+
+
+
+    
+
+    
+
+
+
   } catch (_) {
     return new ChatSDKError("bad_request:api").toResponse();
   }
 
-  try {
-    const {
-      id,
-      message,
-      selectedChatModel,
-      selectedVisibilityType,
-    }: {
-      id: string;
-      message: ChatMessage;
-      selectedChatModel: ChatModel["id"];
-      selectedVisibilityType: VisibilityType;
-    } = requestBody;
-
-    const session = await auth();
-
-    if (!session?.user) {
-      return new ChatSDKError("unauthorized:chat").toResponse();
-    }
-
-    const userType: UserType = session.user.type;
-
-    const messageCount = await getMessageCountByUserId({
-      id: session.user.id,
-      differenceInHours: 24,
-    });
-
-    if (messageCount > entitlementsByUserType[userType].maxMessagesPerDay) {
-      return new ChatSDKError("rate_limit:chat").toResponse();
-    }
-
-    const chat = await getChatById({ id });
-
-    if (chat) {
-      if (chat.userId !== session.user.id) {
-        return new ChatSDKError("forbidden:chat").toResponse();
-      }
-    } else {
-      const title = await generateTitleFromUserMessage({
-        message,
-      });
-
-      await saveChat({
-        id,
-        userId: session.user.id,
-        title,
-        visibility: selectedVisibilityType,
-      });
-    }
-
-    const messagesFromDb = await getMessagesByChatId({ id });
-    const uiMessages = [...convertToUIMessages(messagesFromDb), message];
-
-    const { longitude, latitude, city, country } = geolocation(request);
-
-    const requestHints: RequestHints = {
-      longitude,
-      latitude,
-      city,
-      country,
-    };
-
-    await saveMessages({
-      messages: [
-        {
-          chatId: id,
-          id: message.id,
-          role: "user",
-          parts: message.parts,
-          attachments: [],
-          createdAt: new Date(),
-        },
-      ],
-    });
-
-    const streamId = generateUUID();
-    await createStreamId({ streamId, chatId: id });
-
-    let finalMergedUsage: AppUsage | undefined;
-
-    const stream = createUIMessageStream({
-      execute: ({ writer: dataStream }) => {
-        const result = streamText({
-          model: myProvider.languageModel(selectedChatModel),
-          system: systemPrompt({ selectedChatModel, requestHints }),
-          messages: convertToModelMessages(uiMessages),
-          stopWhen: stepCountIs(5),
-          experimental_activeTools:
-            selectedChatModel === "chat-model-reasoning"
-              ? []
-              : [
-                  "getWeather",
-                  "createDocument",
-                  "updateDocument",
-                  "requestSuggestions",
-                ],
-          experimental_transform: smoothStream({ chunking: "word" }),
-          tools: {
-            getWeather,
-            createDocument: createDocument({ session, dataStream }),
-            updateDocument: updateDocument({ session, dataStream }),
-            requestSuggestions: requestSuggestions({
-              session,
-              dataStream,
-            }),
-          },
-          experimental_telemetry: {
-            isEnabled: isProductionEnvironment,
-            functionId: "stream-text",
-          },
-          onFinish: async ({ usage }) => {
-            try {
-              const providers = await getTokenlensCatalog();
-              const modelId =
-                myProvider.languageModel(selectedChatModel).modelId;
-              if (!modelId) {
-                finalMergedUsage = usage;
-                dataStream.write({
-                  type: "data-usage",
-                  data: finalMergedUsage,
-                });
-                return;
-              }
-
-              if (!providers) {
-                finalMergedUsage = usage;
-                dataStream.write({
-                  type: "data-usage",
-                  data: finalMergedUsage,
-                });
-                return;
-              }
-
-              const summary = getUsage({ modelId, usage, providers });
-              finalMergedUsage = { ...usage, ...summary, modelId } as AppUsage;
-              dataStream.write({ type: "data-usage", data: finalMergedUsage });
-            } catch (err) {
-              console.warn("TokenLens enrichment failed", err);
-              finalMergedUsage = usage;
-              dataStream.write({ type: "data-usage", data: finalMergedUsage });
-            }
-          },
-        });
-
-        result.consumeStream();
-
-        dataStream.merge(
-          result.toUIMessageStream({
-            sendReasoning: true,
-          })
-        );
-      },
-      generateId: generateUUID,
-      onFinish: async ({ messages }) => {
-        await saveMessages({
-          messages: messages.map((currentMessage) => ({
-            id: currentMessage.id,
-            role: currentMessage.role,
-            parts: currentMessage.parts,
-            createdAt: new Date(),
-            attachments: [],
-            chatId: id,
-          })),
-        });
-
-        if (finalMergedUsage) {
-          try {
-            await updateChatLastContextById({
-              chatId: id,
-              context: finalMergedUsage,
-            });
-          } catch (err) {
-            console.warn("Unable to persist last usage for chat", id, err);
-          }
-        }
-      },
-      onError: () => {
-        return "Oops, an error occurred!";
-      },
-    });
-
-    // const streamContext = getStreamContext();
-
-    // if (streamContext) {
-    //   return new Response(
-    //     await streamContext.resumableStream(streamId, () =>
-    //       stream.pipeThrough(new JsonToSseTransformStream())
-    //     )
-    //   );
-    // }
-
-    return new Response(stream.pipeThrough(new JsonToSseTransformStream()));
-  } catch (error) {
-    const vercelId = request.headers.get("x-vercel-id");
-
-    if (error instanceof ChatSDKError) {
-      return error.toResponse();
-    }
-
-    // Check for Vercel AI Gateway credit card error
-    if (
-      error instanceof Error &&
-      error.message?.includes(
-        "AI Gateway requires a valid credit card on file to service requests"
-      )
-    ) {
-      return new ChatSDKError("bad_request:activate_gateway").toResponse();
-    }
-
-    console.error("Unhandled error in chat API:", error, { vercelId });
-    return new ChatSDKError("offline:chat").toResponse();
-  }
+  
 }
 
 export async function DELETE(request: Request) {

@@ -64,6 +64,12 @@ export function Chat({
   const [currentModelId, setCurrentModelId] = useState(initialChatModel);
   const currentModelIdRef = useRef(currentModelId);
 
+  //state for track last response id
+  // const [lastResponseId, setLastResponseId] = useState<string | undefined>();
+  // console.log('Initial lastResponseId:', lastResponseId);
+  const lastResponseIdRef = useRef<string | undefined>();
+  console.log('Initial lastResponseId:', lastResponseIdRef.current);
+
   useEffect(() => {
     currentModelIdRef.current = currentModelId;
   }, [currentModelId]);
@@ -84,23 +90,41 @@ export function Chat({
     transport: new DefaultChatTransport({
       api: "/api/chat",
       fetch: fetchWithErrorHandlers,
+
       prepareSendMessagesRequest(request) {
+        console.log('🚀 Sending message with Response ID:', lastResponseIdRef.current);
         return {
           body: {
             id: request.id,
             message: request.messages.at(-1),
             selectedChatModel: currentModelIdRef.current,
             selectedVisibilityType: visibilityType,
+            previousResponseId: lastResponseIdRef.current, // previous response 
             ...request.body,
           },
         };
       },
+      
     }),
+    
     onData: (dataPart) => {
       setDataStream((ds) => (ds ? [...ds, dataPart] : []));
       if (dataPart.type === "data-usage") {
         setUsage(dataPart.data);
+        console.log('💰 Usage data:', dataPart.data);
+      
+
       }
+      // new response id
+      
+      if (dataPart.data && typeof dataPart.data === 'object' && 'responseId' in dataPart.data) {
+        const newResponseId = (dataPart.data as any).responseId;
+        console.log('🎉 new response ID received:', newResponseId);
+        lastResponseIdRef.current = newResponseId; // ← Use .current
+        console.log('Updated lastResponseId in state:', lastResponseIdRef.current);
+      }
+
+      
     },
     onFinish: () => {
       mutate(unstable_serialize(getChatHistoryPaginationKey));
