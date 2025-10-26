@@ -73,10 +73,14 @@ export default function RootLayout({
       </head>
       <body className="antialiased">
         <ThemeProvider
+          // attribute="class"
+          // defaultTheme="system"
+          // disableTransitionOnChange
+          // enableSystem
           attribute="class"
-          defaultTheme="system"
-          disableTransitionOnChange
-          enableSystem
+          defaultTheme="light"
+          enableSystem={false}
+          forcedTheme="light"
         >
           <Toaster position="top-center" />
           <SessionProvider>{children}</SessionProvider>
