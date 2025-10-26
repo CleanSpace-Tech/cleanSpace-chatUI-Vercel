@@ -99,7 +99,7 @@ export async function POST(request: Request) {
     const previousResponseId = requestBody.previousResponseId;
     console.log("user sent new message's Previous Response ID:", previousResponseId);
 
-    // call custom backend
+    // call custom backend API
     const backendURL = process.env.BACKEND_URL;
     if (!backendURL) {
       throw new Error("Backend URL is not defined");
