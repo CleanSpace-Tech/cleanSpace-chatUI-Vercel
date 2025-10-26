@@ -25,10 +25,15 @@ function PureChatHeader({
   const { width: windowWidth } = useWindowSize();
 
   return (
-    <header className="sticky top-0 flex items-center gap-2 bg-background px-2 py-1.5 md:px-2">
-      <SidebarToggle />
+    <header className="flex items-center justify-between w-full h-14 px-4 bg-[#2563eb] text-white shadow-md">
+      
 
-      {(!open || windowWidth < 768) && (
+      <div className="flex items-center gap-3">
+        {/* <SidebarToggle /> */}
+        <h1 className="text-lg font-medium">Chat with CleanSpace</h1>
+      </div>
+
+      {/* {(!open || windowWidth < 768) && (
         <Button
           className="order-2 ml-auto h-8 px-2 md:order-1 md:ml-0 md:h-fit md:px-2"
           onClick={() => {
@@ -37,20 +42,20 @@ function PureChatHeader({
           }}
           variant="outline"
         >
-          <PlusIcon />
-          <span className="md:sr-only">New Chat</span>
-        </Button>
-      )}
 
-      {!isReadonly && (
+          <span className="md:sr-only">Chat with CleanSpace</span>
+        </Button>
+      )} */}
+
+      {/* {!isReadonly && (
         <VisibilitySelector
           chatId={chatId}
           className="order-1 md:order-2"
           selectedVisibilityType={selectedVisibilityType}
         />
-      )}
+      )} */}
 
-      <Button
+      {/* <Button
         asChild
         className="order-3 hidden bg-zinc-900 px-2 text-zinc-50 hover:bg-zinc-800 md:ml-auto md:flex md:h-fit dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
       >
@@ -62,7 +67,7 @@ function PureChatHeader({
           <VercelIcon size={16} />
           Deploy with Vercel
         </Link>
-      </Button>
+      </Button> */}
     </header>
   );
 }
