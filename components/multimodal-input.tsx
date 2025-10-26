@@ -311,7 +311,7 @@ function PureMultimodalInput({
             rows={1}
             value={input}
           />{" "}
-          <Context {...contextProps} />
+          {/* <Context {...contextProps} /> */}
         </div>
         <PromptInputToolbar className="!border-top-0 border-t-0! p-0 shadow-none dark:border-0 dark:border-transparent!">
           <PromptInputTools className="gap-0 sm:gap-0.5">
@@ -330,7 +330,7 @@ function PureMultimodalInput({
             <StopButton setMessages={setMessages} stop={stop} />
           ) : (
             <PromptInputSubmit
-              className="size-8 rounded-full bg-primary text-primary-foreground transition-colors duration-200 hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground"
+              className="size-8 rounded-full bg-primary text-primary-foreground transition-colors duration-200 hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground bg-[#2563eb]"
               disabled={!input.trim() || uploadQueue.length > 0}
               status={status}
             >
@@ -426,7 +426,7 @@ function PureModelSelectorCompact({
       }}
       value={selectedModel?.name}
     >
-      <Trigger
+      {/* <Trigger
         className="flex h-8 items-center gap-2 rounded-lg border-0 bg-background px-2 text-foreground shadow-none transition-colors hover:bg-accent focus:outline-none focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0"
         type="button"
       >
@@ -435,7 +435,7 @@ function PureModelSelectorCompact({
           {selectedModel?.name}
         </span>
         <ChevronDownIcon size={16} />
-      </Trigger>
+      </Trigger> */}
       <PromptInputModelSelectContent className="min-w-[260px] p-0">
         <div className="flex flex-col gap-px">
           {chatModels.map((model) => (
